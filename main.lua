@@ -39,7 +39,7 @@
 -- Show deployment on Android or iOS device
 -- Demo app and show some source code in front of class (during the last week)
 
-
+-- Load physics engine
 local physics = require("physics")
 
 ------------------------------
@@ -59,10 +59,10 @@ local bgClouds
 local bg
 local bgPaint
 
---Declare constants for player
+--Declare constants for the player
 local CONST_PLAYER_WIDTH = 20
 local CONST_PLAYER_HEIGHT = 20
-local CONST_PLAYER_X_INIT = display.contentWidth / 10
+local CONST_PLAYER_X_INIT = display.contentWidth / 2
 local CONST_PLAYER_Y_INIT = 0
 local CONST_PLAYER_Y_ACCEL = 0.8 --Gravity variable
 local CONST_PLAYER_JUMP_VEL = -17
@@ -91,12 +91,49 @@ local objects
 
 local jump = 1
 local objRope = nil
+local ropeJoint
+
+local isHooked = false
 
 --------------------
 --Define functions--
 --------------------
 
---Function for parallax scrolling buildings
+--Create an object
+local function createObject(obj, options)
+	if(options.color ~= nil) then
+		obj = display.newRect(options.x, options.y, options.width, options.height)
+		obj:setFillColor(unpack(options.color))
+	end
+
+	if(options.image ~= nil) then
+		obj = display.newImageRect( options.image, options.width, options.height )
+		obj.x, obj.y = options.x, options.y
+	end
+
+	obj.xVel = options.xVel or 0
+
+	--Return the object
+	return obj
+end
+
+local function createRopeJoint()
+	if(ropeJoint == nil) then
+		ropeJoint = physics.newJoint( "rope", objPlayer, objGrapplePt )
+		ropeJoint.maxLength = 90
+		isHooked = true
+		objSpike:removeSelf()
+		objSpike = nil
+	end
+end
+
+local function onLocalCollision( self, event )
+	if(event.other ~= objPlayer) then
+		timer.performWithDelay( 1, createRopeJoint )
+	end
+end
+
+--Function for parallax scrolling
 local function parallaxScrolling(obj)
 	if(obj.xVel ~= nil) then
 		obj.x = obj.x + obj.xVel
@@ -106,106 +143,163 @@ local function parallaxScrolling(obj)
 	end
 end
 
---Create function for player tap jump
+--Create function for player tap jump/shoot chain
 local function playerJump(event)
 
-	if(objPlayer ~= nil) then
+	-- At the beginning of the player's tap press
+	if(event.phase == "began") then
 
-		if(event.phase == "began") then
+		-- If the player exists
+		if(objPlayer ~= nil) then
+
+			-- If the joint exists between the player and a
+			-- grapple point
+			if(ropeJoint ~= nil) then
+
+				-- Remove the joint
+				ropeJoint:removeSelf()
+				ropeJoint = nil
+
+				-- Obtain the player's velocity
+				local x, y = objPlayer:getLinearVelocity()
+
+				-- Set the player's velocity to double the 
+				-- current value
+				objPlayer:setLinearVelocity(2*x, 2*y)
+
+				isHooked = false
+
+				objRope:removeSelf()
+				objRope = nil
+			end
+		
+			-- If the player hasn't jumped yet
 			if(jump == 0) then
+
 				--Cause the player to jump
 				objPlayer:setLinearVelocity(0, -200)
-				jump = jump + 1
+
+				-- Set the player jump variable to true
+				jump = 1
+
+			-- If the player has already jumped
 			elseif(jump ==1) then
+
+				-- If the chain doesn't exist yet
 				if(objRope == nil) then
+
+					-- Create the chain that the player throws
 					objRope = createObject(objRope,{
 						x = objPlayer.x,
 						y = objPlayer.y,
 						width = 1,
-						height = 1,
-						color = {1,1,1},
+						height = 3,
+						color = {0.5,0.5,0.5},
 					})
+
+					-- Shoot the chain out at a 45 degree angle
 					objRope.rotation = 315
+
+					-- Initialize the timer for the chain
 					objRope.timer = 0
-				--if(objSpike == )
-				objSpike = createObject(objSpike,{
-					x = objRope.x,
-					y = objRope.y,
-					width = 20,
-					height = 20,
-					color = {1,1,1},
-				})
+					
+					-- Create the spike attached to the chain
+					objSpike = createObject(objSpike,{
+						x = objRope.x,
+						y = objRope.y,
+						width = 12,
+						height = 12,
+						image = "Spike.png"
+					})
+
+					-- Add physics to the spike
+					physics.addBody(objSpike, "dynamic", {isSensor = true})
+
+					-- Add collision detection to the spike
+					objSpike.collision = onLocalCollision
+					objSpike:addEventListener( "collision" )
 				end
 			end
 		end
 	end
 end
 
---Create an object
-function createObject(obj, options)
+local function updateGrappleHook(rope, spike)
 
-	obj = display.newRect(options.x, options.y, options.width, options.height)
-	obj:setFillColor(unpack(options.color))
+	if(rope ~= nil) then
 
-	obj.xVel = options.xVel or 0
-	--obj.yVel = 0
-
-	--Return the object
-	return obj
-end
-
-function updateGrappleHook()
-
-	if(objRope ~= nil) then
+		-- Initialize the chain's speed and time between phases
 		local ropeSpeed = 7
 		local ropeTime = 20
 
-		objRope.x = objPlayer.x
-		objRope.y = objPlayer.y
-		objRope.anchorX = 0
-		objRope.timer = objRope.timer + 1
-		print(objRope.x + (objRope.width) / math.sqrt(2))
+		rope.x = objPlayer.x
+		rope.y = objPlayer.y
+		rope.anchorX = 0
+		rope.timer = rope.timer + 1
 
 		--Timer events
-		if(objRope.timer < ropeTime) then
-			objRope.width = objRope.width + ropeSpeed
+		if(rope.timer < ropeTime) then
+			rope.width = rope.width + ropeSpeed
 
-		elseif(objRope.timer >= ropeTime and objRope.timer < ropeTime * 2) then
-			objRope.width = objRope.width - ropeSpeed
+		elseif(rope.timer >= ropeTime and rope.timer < ropeTime * 2) then
+			rope.width = rope.width - ropeSpeed
 
-		elseif(objRope.timer > ropeTime * 2) then
-			objRope:removeSelf()
-			objRope = nil
-			objSpike:removeSelf()
-			objSpike = nil
+		elseif(rope.timer == ropeTime * 2) then
+			rope:removeSelf()
+			rope = nil
+			spike:removeSelf()
+			spike = nil
 		end
 
-		if(objSpike ~= nil and objRope ~= nil) then
-			objSpike.x = objRope.x + (objRope.width) / math.sqrt(2)
-			objSpike.y = objRope.y - (objRope.width) / math.sqrt(2)
+		if(spike ~= nil and rope ~= nil) then
+			spike.x = rope.x + (rope.width) / math.sqrt(2)
+			spike.y = rope.y - (rope.width) / math.sqrt(2)
 		end
-
 	end
-end
 
+	return rope, spike
+end
 
 local function updateRopeObject(player, grapplePnt, rope)
 
-	--[[local ropeX = objGrapplePt.x - objPlayer.x
-	local ropeY = objGrapplePt.y - objPlayer.y
-	objRope.rotation = 360 * math.atan(ropeY / ropeX) / (2 * math.pi)
+	-- Set variables for changes in x and y
+	local ropeDx = objGrapplePt.x - objPlayer.x
+	local ropeDy = objGrapplePt.y - objPlayer.y
+
+	objRope.x = objPlayer.x
+	objRope.y = objPlayer.y
+	-- 
+	objRope.rotation = 360 * math.atan(ropeDy / ropeDx) / (2 * math.pi) + 180
 
 	if(objPlayer.x < objGrapplePt.x) then
 		objRope.anchorX = 1
 	else
 		objRope.anchorX = 0
 	end
-	objRope.width = math.sqrt(ropeX^2 + ropeY^2)]]
+	objRope.width = math.sqrt(ropeDx^2 + ropeDy^2)
 end
 
 --Update game events
 local function updateGameEvents()
 	gameTimer = gameTimer + 1
+end
+
+-- Keep the player from leaving the bounds of the game
+local function keepPlayerInBounds()
+	if(objPlayer.x < -44 + 10) then
+		objPlayer.x = -44 + 10
+	end
+	if(objPlayer.x > display.actualContentWidth - 44 - 10) then
+		objPlayer.x = display.actualContentWidth - 44 - 10
+	end
+
+	if(jump <= 1) then
+		if(objPlayer.x < CONST_PLAYER_X_INIT - 10) then
+			objPlayer.x = objPlayer.x + 2
+		elseif(objPlayer.x > CONST_PLAYER_X_INIT + 10) then
+			objPlayer.x = objPlayer.x - 2
+		end
+	end
 end
 
 -- Handle all enter frame events
@@ -214,6 +308,8 @@ local function handleEnterFrameEvents(event)
 	--Update game events
 	updateGameEvents()
 
+	-- Keep the player in the game's boundaries
+	keepPlayerInBounds()
 
 	if(objPlayer.y >= CONST_GROUND_Y - 1) then
 		jump = 0
@@ -227,8 +323,18 @@ local function handleEnterFrameEvents(event)
 		end
 	end
 
-	-- Update rope
-	updateGrappleHook()
+	parallaxScrolling(objGrapplePt)
+
+	-- Update chain when its shot and not locked onto a
+	-- grapple point
+	if(objRope ~= nil and isHooked == false) then
+		objRope, objSpike = updateGrappleHook(objRope, objSpike)
+	end
+
+	-- Update the chain joint if it exists
+	if(ropeJoint ~= nil) then
+		updateRopeObject()
+	end
 end
 
 -- Handle all touch events
@@ -245,15 +351,18 @@ end
 --Initialize variables and objects
 local function initGame()
 
+	-- Initialize the physics engine
 	physics.start()
 
+	-- Initialize the game timer
 	gameTimer = 0
-	objPlayer = {}
 
+	-- Create the sky background
 	bg = display.newRect(-44 + display.actualContentWidth / 2, display.actualContentHeight / 2,
 	 display.actualContentWidth, display.actualContentHeight)
 	bg.fill = {0, 0.5, 1}
 
+	-- Create the moon
 	moon = createObject(moon,
 		{
 			x = display.contentWidth - 50 + 22,
@@ -261,7 +370,8 @@ local function initGame()
 			width = 50,
 			height = 50,
 			color = {1,1,1}
-		}) 
+		}
+	) 
 	moon.alpha = 0.25
 
 	-- Create background clouds for parallel scrolling
@@ -269,38 +379,41 @@ local function initGame()
 	bgClouds = {}
 	for i=1, 5 do
 		bgClouds[i] = createObject(bgClouds[i],
-		{
-			x = -44 + 120 * i,
-			y = 70,
-			width = 40,
-			height = 20,
-			color = {1, 1, 1},
-			xVel = -2
-		})
+			{
+				x = -44 + 120 * i,
+				y = 70,
+				width = 40,
+				height = 20,
+				color = {1, 1, 1},
+				xVel = -2
+			}
+		)
 	end
 
 	for i=6, 10 do
 		bgClouds[i] = createObject(bgClouds[i],
-		{
-			x = -44 + 120 * (i-5),
-			y = 40,
-			width = 20,
-			height = 10,
-			color = {1, 1, 1},
-			xVel = -1
-		})
+			{
+				x = -44 + 120 * (i-5),
+				y = 40,
+				width = 20,
+				height = 10,
+				color = {1, 1, 1},
+				xVel = -1
+			}
+		)
 	end
 
 	for i=11, 15 do
 		bgClouds[i] = createObject(bgClouds[i],
-		{
-			x = -44 + 120 * (i-10),
-			y = 20,
-			width = 10,
-			height = 5,
-			color = {1, 1, 1},
-			xVel = -0.5
-		})
+			{
+				x = -44 + 120 * (i-10),
+				y = 20,
+				width = 10,
+				height = 5,
+				color = {1, 1, 1},
+				xVel = -0.5
+			}
+		)
 	end
 
 	for i=1,15 do
@@ -309,7 +422,6 @@ local function initGame()
 
 	-- Create background grass for parallel scrolling
 	-- Create 3-4 layers of grass (different sizes)
-
 	grass = createObject(grass,
 		{
 			x = display.contentWidth / 2,
@@ -317,8 +429,10 @@ local function initGame()
 			width = display.contentWidth + 88,
 			height = display.contentHeight - CONST_GROUND_Y,
 			color = {0,1,0}
-		}) 
+		}
+	) 
 
+	-- Create the player for the player to control
 	objPlayer = createObject(objPlayer,
 		{
 			x = CONST_PLAYER_X_INIT,
@@ -326,22 +440,30 @@ local function initGame()
 			width = CONST_PLAYER_WIDTH,
 			height = CONST_PLAYER_HEIGHT,
 			color = {1,0,0},
-		})
+		}
+	)
 
+	-- Create the grapple point for the chain spike to
+	-- attach to
 	objGrapplePt = createObject(objGrapplePt,
 		{
-			x = 240,
-			y = 120,
+			x = 140,
+			y = 140,
 			width = 20,
 			height = 20,
 			color = {1,0,1},
-		})
+			xVel = -2
+		}
+	)
 
-	physics.addBody(objPlayer, "dynamic", { friction=0.5, bounce=0 })
-	physics.addBody(grass, "static", {bounce = 0})
-	physics.addBody(objGrapplePt, "static")
-	--ropeJoint = physics.newJoint( "rope", objPlayer, objGrapplePt )
-	--ropeJoint.maxLength = 150
+	-- Add physics to the player
+	physics.addBody(objPlayer, "dynamic", { friction=1, bounce=0 })
+
+	-- Add physics to the grass
+	physics.addBody(grass, "static", {bounce = 0, friction = 1})
+
+	-- Add physics to the grapple point
+	physics.addBody(objGrapplePt, "static", {bounce = 0})
 
 	handleEventListeners()
 end
