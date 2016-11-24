@@ -4,6 +4,41 @@
 --
 -----------------------------------------------------------------------------------------
 
+-- Endless runner game with grappling hook mechanics
+--
+-- In this game, a knight runs along an endless strip to land (simulated by
+-- having objects scroll from right to left). Background objects will utilize
+-- parallax scrolling to create an illusion of depth. There will be a few layers of
+-- clouds scrolling by, as well as a distant moon that will stay still. 
+--
+-- During the game, spikes will appear along the ground that will kill the knight (player)
+-- if he touches them. In addition, small walls made of blocks will appear to block the
+-- knights path. To get past these obstacles, the player must tap the screen at particular
+-- times to avoid these traps. 
+--
+-- The first time the player taps the screen, the knight will perform a short jump. The
+-- second time the player taps the screen (before the knight hits the ground), the knight
+-- will shoot out a chain at a 45 degree angle with a small spike attached to the end of it.
+--
+-- When the spike at the end of the chain hits certain grapple points (such as small floating
+-- rings, for instance), the knight will swing from the grapple point utilizing a rope joint.
+-- This keeps the player at a max distance from the point but still allow the knight to have
+-- some momentum so that they player can launch the knight pass the obstacles.
+--
+-- Grapple joints in the game will vary. Some will be simple static objects that scroll slowly
+-- to the left, while others may be more complicated, such as points attached to one another
+-- with pulley joints. This will force the player to use different strategies to overcome
+-- each obstacle.
+-- 
+-- As the game is an endless runner, there is no "winning" the game so to speak. Instead,
+-- the farther along in the game the player gets, the greater his/her score will be. The
+-- score will increase constantly over time. These scores may be saved in a high score
+-- table that the player can access in a different view.
+--
+-- The game will have a few different screens: at minimum, a title screen, a gameplay screen,
+-- and an options screen. If time permits, I will also implement a high score screen.
+
+
 -- Final project requirements:
 --
 -- Physics:
@@ -46,53 +81,66 @@ local physics = require("physics")
 --Create file local constants
 ------------------------------
 
---Create parent table for all parallax scrolling objects
-local parallaxObj = {}
+--Declare constants for the background
+local bgPaint			   -- Color of the background
+local bgOriginX, bgOriginY -- Coordinates for the background
+local bgWidth, bgHeight    -- Dimensions for the background
 
--- Create moon
-local moon
+--Declare constants for the knight
+local CONST_KNIGHT_WIDTH = 24
+local CONST_KNIGHT_HEIGHT = 32
+local CONST_KNIGHT_X_INIT = display.contentWidth / 2
+local CONST_KNIGHT_Y_INIT = 0
+local CONST_KNIGHT_Y_ACCEL = 0.8 --Gravity variable
+local CONST_KNIGHT_tap_VEL = -17
+local CONST_GROUND_Y = display.contentHeight - display.screenOriginY
+ - CONST_KNIGHT_HEIGHT / 2 - 32
 
--- Create array of clouds
-local bgClouds
 
--- Create background
-local bg
-local bgPaint
-
---Declare constants for the player
-local CONST_PLAYER_WIDTH = 20
-local CONST_PLAYER_HEIGHT = 20
-local CONST_PLAYER_X_INIT = display.contentWidth / 2
-local CONST_PLAYER_Y_INIT = 0
-local CONST_PLAYER_Y_ACCEL = 0.8 --Gravity variable
-local CONST_PLAYER_JUMP_VEL = -17
-local CONST_GROUND_Y = display.contentHeight - display.screenOriginY - CONST_PLAYER_HEIGHT / 2 - 32
-
---Declare player object
-local objPlayer
-
--- Declare enemy objects
-local enemies
 
 ------------------------------
 --Declare file local variables
 ------------------------------
 
---Declare a game timer that triggers various game events
-local gameTimer
-
---Declare variables for the background picture
-local bgOriginX, bgOriginY
-local bgWidth
-local bgHeight
-
 --Declare array for game objects
 local objects
 
-local jump = 1
-local objRope = nil
-local ropeJoint
+--Create parent table for all parallax scrolling objects
+local parallaxObj = {}
 
+-- Declare a variable for the moon
+local moon
+
+-- Declare an array of clouds
+local bgClouds
+
+--Declare a variable for the background
+local bg
+
+-- Declare player object
+local objKnight
+
+-- Declare an array of spike objects
+local objSpikes
+
+--Declare a game timer that triggers various game events
+local gameTimer
+
+-- Number of taps the player has done since landing
+-- The first tap will cause the knight to jump.
+-- The first tap will cause the knight to shoot a chain with a spike on the end of it
+-- at a 45 degree angle.
+local tap = 1
+
+-- Declare a variable for the chain that the knight shoots out
+local objChain = nil
+
+-- Declare a variable for the joint that is created between the knight and the
+-- grapple points (embodied by the chain)
+local chainJoint
+
+-- Declare a variable to determine whether the knight is successfully grappled to a
+-- grapple point or not
 local isHooked = false
 
 --------------------
@@ -101,112 +149,170 @@ local isHooked = false
 
 --Create an object
 local function createObject(obj, options)
+
+	-- If the object has a color (e.g. a shape filled with a color)
 	if(options.color ~= nil) then
 		obj = display.newRect(options.x, options.y, options.width, options.height)
-		obj:setFillColor(unpack(options.color))
+		obj.fill = options.color
 	end
 
+	-- If the object has an associated image path string
 	if(options.image ~= nil) then
 		obj = display.newImageRect( options.image, options.width, options.height )
 		obj.x, obj.y = options.x, options.y
 	end
 
+	-- If the object is moving (generally for parallax scrolling)
 	obj.xVel = options.xVel or 0
 
 	--Return the object
 	return obj
 end
 
-local function createRopeJoint()
-	if(ropeJoint == nil) then
-		ropeJoint = physics.newJoint( "rope", objPlayer, objGrapplePt )
-		ropeJoint.maxLength = 90
+-- Create a joint for the chain that the knight shoots out
+local function createChainJoint()
+
+	-- Check that the chain joint doesn't already exist
+	if(chainJoint == nil) then
+
+		-- Find the change in x and y between where the knight shoots it and
+		-- the grappling point
+		local chainDx = objGrapplePt.x - objKnight.x - 8
+		local chainDy = objGrapplePt.y - objKnight.y
+
+		-- Calculate the hypotenuse for the chain
+		local diagDist = math.sqrt(chainDx^2 + chainDy^2)
+
+		-- Create a joint for the chain between the knight and the grappling
+		-- point
+		chainJoint = physics.newJoint( "rope", objKnight, objGrapplePt )
+
+		-- Limit the chain distance so that the player doesn't drag along the
+		-- ground (which is unintended behavior)
+		if(diagDist > 100) then
+			chainJoint.maxLength = 100
+		else
+			chainJoint.maxLength = diagDist
+		end
+
+		-- Set a variable that shows that the player is hooked to a grapple point
 		isHooked = true
+
+		-- Remove the spike from the chain as it is no longer needed
 		objSpike:removeSelf()
 		objSpike = nil
 	end
 end
 
+-- Collision checking for detecting if the spike on the end
+-- of the chain collides with a grapple point
+-- (Check if spike collides with each grapple point)
 local function onLocalCollision( self, event )
-	if(event.other ~= objPlayer) then
-		timer.performWithDelay( 1, createRopeJoint )
+	if(event.other ~= objKnight) then
+		timer.performWithDelay( 1, createChainJoint )
 	end
 end
 
 --Function for parallax scrolling
 local function parallaxScrolling(obj)
+
+	-- Check to make sure the passed object has an x velocity
 	if(obj.xVel ~= nil) then
+
+		-- Scroll the object depending on its velocity
 		obj.x = obj.x + obj.xVel
 	end
+
+	-- If the object is to be recycled (a.k.a. it is moved to
+	-- the right side of the screen instead of respawning)
 	if(obj.x < -obj.width - 44) then
+		-- Move the object to the right side of the screen
 		obj.x = display.actualContentWidth
 	end
 end
 
---Create function for player tap jump/shoot chain
-local function playerJump(event)
+-- Create function for player to cause the knight
+-- to jump and/or shoot a chain during a screen tap
+local function playertap(event)
 
 	-- At the beginning of the player's tap press
 	if(event.phase == "began") then
 
-		-- If the player exists
-		if(objPlayer ~= nil) then
+		-- If the knight exists
+		if(objKnight ~= nil) then
 
-			-- If the joint exists between the player and a
+			-- If the joint exists between the knight and a
 			-- grapple point
-			if(ropeJoint ~= nil) then
+			if(chainJoint ~= nil) then
 
 				-- Remove the joint
-				ropeJoint:removeSelf()
-				ropeJoint = nil
+				chainJoint:removeSelf()
+				chainJoint = nil
 
-				-- Obtain the player's velocity
-				local x, y = objPlayer:getLinearVelocity()
+				-- Obtain the knight's velocity
+				local x, y = objKnight:getLinearVelocity()
 
-				-- Set the player's velocity to double the 
+				-- Set the knight's velocity to double the 
 				-- current value
-				objPlayer:setLinearVelocity(2*x, 2*y)
+				objKnight:setLinearVelocity(1.5*x, 1.5*y)
 
+				-- Mark that the knight is no longer hooked to
+				-- the grapple point
 				isHooked = false
 
-				objRope:removeSelf()
-				objRope = nil
+				-- Remove the chain as it is no longer needed
+				objChain:removeSelf()
+				objChain = nil
+
+				-- Set the number of taps that the player has done
+				-- since the knight has jumped to 1 (this allows the
+				-- player to shoot the chain out again before hitting
+				-- the ground)
+				tap = 1
 			end
 		
-			-- If the player hasn't jumped yet
-			if(jump == 0) then
+			-- If the player hasn't tapped the screen yet
+			if(tap == 0) then
 
-				--Cause the player to jump
-				objPlayer:setLinearVelocity(0, -200)
+				--Cause the knight to jump
+				objKnight:setLinearVelocity(0, -150)
 
-				-- Set the player jump variable to true
-				jump = 1
+				-- Set the player tap variable to true
+				tap = 1
 
-			-- If the player has already jumped
-			elseif(jump ==1) then
+			-- If the player has already tapped the screen once since
+			-- the knight last touched the ground
+			elseif(tap == 1) then
+
+				-- Mark the tap variable to 2 so that the player can't shoot
+				-- the chain out and/or jump again until the knight touches
+				-- the ground (unless the player gets the knight to successfully
+				-- grab onto a grapple point, in which case, the player will be
+				-- able to shoot the chain out again)
+				tap = 2
 
 				-- If the chain doesn't exist yet
-				if(objRope == nil) then
+				if(objChain == nil) then
 
-					-- Create the chain that the player throws
-					objRope = createObject(objRope,{
-						x = objPlayer.x,
-						y = objPlayer.y,
+					-- Create the chain that the knight throws
+					objChain = createObject(objChain,{
+						x = objKnight.x + 8,
+						y = objKnight.y,
 						width = 1,
 						height = 3,
 						color = {0.5,0.5,0.5},
 					})
 
 					-- Shoot the chain out at a 45 degree angle
-					objRope.rotation = 315
+					objChain.rotation = 315
 
 					-- Initialize the timer for the chain
-					objRope.timer = 0
+					objChain.timer = 0
 					
 					-- Create the spike attached to the chain
 					objSpike = createObject(objSpike,{
-						x = objRope.x,
-						y = objRope.y,
+						x = objChain.x,
+						y = objChain.y,
 						width = 12,
 						height = 12,
 						image = "Spike.png"
@@ -232,8 +338,8 @@ local function updateGrappleHook(rope, spike)
 		local ropeSpeed = 7
 		local ropeTime = 20
 
-		rope.x = objPlayer.x
-		rope.y = objPlayer.y
+		rope.x = objKnight.x + 8
+		rope.y = objKnight.y
 		rope.anchorX = 0
 		rope.timer = rope.timer + 1
 
@@ -249,6 +355,8 @@ local function updateGrappleHook(rope, spike)
 			rope = nil
 			spike:removeSelf()
 			spike = nil
+
+			tap = 1
 		end
 
 		if(spike ~= nil and rope ~= nil) then
@@ -263,20 +371,20 @@ end
 local function updateRopeObject(player, grapplePnt, rope)
 
 	-- Set variables for changes in x and y
-	local ropeDx = objGrapplePt.x - objPlayer.x
-	local ropeDy = objGrapplePt.y - objPlayer.y
+	local chainDx = objGrapplePt.x - objKnight.x - 8
+	local chainDy = objGrapplePt.y - objKnight.y
 
-	objRope.x = objPlayer.x
-	objRope.y = objPlayer.y
+	objChain.x = objKnight.x + 8
+	objChain.y = objKnight.y
 	-- 
-	objRope.rotation = 360 * math.atan(ropeDy / ropeDx) / (2 * math.pi) + 180
+	objChain.rotation = 360 * math.atan(chainDy / chainDx) / (2 * math.pi) + 180
 
-	if(objPlayer.x < objGrapplePt.x) then
-		objRope.anchorX = 1
+	if(objKnight.x < objGrapplePt.x - 8) then
+		objChain.anchorX = 1
 	else
-		objRope.anchorX = 0
+		objChain.anchorX = 0
 	end
-	objRope.width = math.sqrt(ropeDx^2 + ropeDy^2)
+	objChain.width = math.sqrt(chainDx^2 + chainDy^2)
 end
 
 --Update game events
@@ -286,20 +394,20 @@ end
 
 -- Keep the player from leaving the bounds of the game
 local function keepPlayerInBounds()
-	if(objPlayer.x < -44 + 10) then
-		objPlayer.x = -44 + 10
+	if(objKnight.x < -44 + 10) then
+		objKnight.x = -44 + 10
 	end
-	if(objPlayer.x > display.actualContentWidth - 44 - 10) then
-		objPlayer.x = display.actualContentWidth - 44 - 10
+	if(objKnight.x > display.actualContentWidth - 44 - 10) then
+		objKnight.x = display.actualContentWidth - 44 - 10
 	end
 
-	if(jump <= 1) then
-		if(objPlayer.x < CONST_PLAYER_X_INIT - 10) then
-			objPlayer.x = objPlayer.x + 2
-		elseif(objPlayer.x > CONST_PLAYER_X_INIT + 10) then
-			objPlayer.x = objPlayer.x - 2
+	--if(tap <= 1) then
+		if(objKnight.x < CONST_KNIGHT_X_INIT - 10) then
+			objKnight.x = objKnight.x + 2
+		elseif(objKnight.x > CONST_KNIGHT_X_INIT + 10) then
+			objKnight.x = objKnight.x - 2
 		end
-	end
+	--end
 end
 
 -- Handle all enter frame events
@@ -311,8 +419,20 @@ local function handleEnterFrameEvents(event)
 	-- Keep the player in the game's boundaries
 	keepPlayerInBounds()
 
-	if(objPlayer.y >= CONST_GROUND_Y - 1) then
-		jump = 0
+	if(tap == 0) then
+		if(objChain ~= nil and objSpike ~= nil) then
+			objChain:removeSelf()
+			objChain = nil
+			objSpike:removeSelf()
+			objSpike = nil
+		end
+	end
+
+	-- Prevent the player from rotating
+	objKnight.rotation = 0
+
+	if(objKnight.y >= grass.y - grass.height / 2 - objKnight.height / 2 - 1) then
+		tap = 0
 	end
 
 
@@ -323,23 +443,23 @@ local function handleEnterFrameEvents(event)
 		end
 	end
 
-	parallaxScrolling(objGrapplePt)
+	obj = parallaxScrolling(objGrapplePt)
 
 	-- Update chain when its shot and not locked onto a
 	-- grapple point
-	if(objRope ~= nil and isHooked == false) then
-		objRope, objSpike = updateGrappleHook(objRope, objSpike)
+	if(objChain ~= nil and isHooked == false) then
+		objChain, objSpike = updateGrappleHook(objChain, objSpike)
 	end
 
 	-- Update the chain joint if it exists
-	if(ropeJoint ~= nil) then
+	if(chainJoint ~= nil) then
 		updateRopeObject()
 	end
 end
 
 -- Handle all touch events
 local function handleTouchEvents(event)
-	playerJump(event)
+	playertap(event)
 end
 
 --Handle all of the event listeners
@@ -360,8 +480,12 @@ local function initGame()
 	-- Create the sky background
 	bg = display.newRect(-44 + display.actualContentWidth / 2, display.actualContentHeight / 2,
 	 display.actualContentWidth, display.actualContentHeight)
-	bg.fill = {0, 0.5, 1}
-
+	local paint = {
+    	type = "gradient",
+    	color1 = { 0,0.5,1,1 },
+    	color2 = { 0.75,0,1,1 },
+	}
+	bg.fill = paint
 	-- Create the moon
 	moon = createObject(moon,
 		{
@@ -369,77 +493,99 @@ local function initGame()
 			y = 50,
 			width = 50,
 			height = 50,
-			color = {1,1,1}
+			image = "Moon.png"
 		}
 	) 
-	moon.alpha = 0.25
+	moon.alpha = 0.3
 
 	-- Create background clouds for parallel scrolling
 	-- Create 3-4 layers of clouds (different sizes)
+
+	-- Create large clouds
 	bgClouds = {}
 	for i=1, 5 do
 		bgClouds[i] = createObject(bgClouds[i],
 			{
 				x = -44 + 120 * i,
-				y = 70,
-				width = 40,
-				height = 20,
-				color = {1, 1, 1},
-				xVel = -2
-			}
-		)
-	end
-
-	for i=6, 10 do
-		bgClouds[i] = createObject(bgClouds[i],
-			{
-				x = -44 + 120 * (i-5),
 				y = 40,
-				width = 20,
-				height = 10,
-				color = {1, 1, 1},
+				width = 96,
+				height = 32,
+				image = "Large Cloud.png",
 				xVel = -1
 			}
 		)
 	end
 
-	for i=11, 15 do
+	-- Create medium clouds
+	for i=6, 10 do
 		bgClouds[i] = createObject(bgClouds[i],
 			{
-				x = -44 + 120 * (i-10),
-				y = 20,
-				width = 10,
-				height = 5,
-				color = {1, 1, 1},
+				x = -44 + 120 * (i-5),
+				y = 80,
+				width = 40,
+				height = 20,
+				image = "Medium Cloud.png",
 				xVel = -0.5
 			}
 		)
 	end
 
-	for i=1,15 do
-		bgClouds[i].alpha = 0.5
+	-- Create small clouds
+	for i=11, 15 do
+		bgClouds[i] = createObject(bgClouds[i],
+			{
+				x = -44 + 120 * (i-10),
+				y = 100,
+				width = 20,
+				height = 10,
+				image = "Small Cloud.png",
+				xVel = -0.25
+			}
+		)
+	end
+
+	for i=16, 20 do
+		bgClouds[i] = createObject(bgClouds[i],
+			{
+				x = -44 + 100 * (i-15),
+				y = 100 + 10,
+				width = 10,
+				height = 5,
+				image = "Small Cloud.png",
+				xVel = -0.25
+			}
+		)
+	end
+
+	for i=1,#bgClouds do
+		bgClouds[i].alpha = 0.6
 	end
 
 	-- Create background grass for parallel scrolling
 	-- Create 3-4 layers of grass (different sizes)
+	local paint = {
+    	type = "gradient",
+    	color1 = { 0.5,1,0,1 },
+    	color2 = { 0,1,0,1 },
+	}
 	grass = createObject(grass,
 		{
 			x = display.contentWidth / 2,
-			y = CONST_GROUND_Y + (display.contentHeight - CONST_GROUND_Y) / 2 + CONST_PLAYER_HEIGHT / 2,
+			y = CONST_GROUND_Y + (display.contentHeight - CONST_GROUND_Y) / 2,
 			width = display.contentWidth + 88,
 			height = display.contentHeight - CONST_GROUND_Y,
-			color = {0,1,0}
+			color = paint
 		}
 	) 
 
 	-- Create the player for the player to control
-	objPlayer = createObject(objPlayer,
+	objKnight = createObject(objKnight,
 		{
-			x = CONST_PLAYER_X_INIT,
-			y = CONST_PLAYER_Y_INIT,
-			width = CONST_PLAYER_WIDTH,
-			height = CONST_PLAYER_HEIGHT,
-			color = {1,0,0},
+			x = CONST_KNIGHT_X_INIT,
+			y = CONST_KNIGHT_Y_INIT,
+			width = CONST_KNIGHT_WIDTH,
+			height = CONST_KNIGHT_HEIGHT,
+			image = "Knight.png"
 		}
 	)
 
@@ -449,15 +595,16 @@ local function initGame()
 		{
 			x = 140,
 			y = 140,
-			width = 20,
-			height = 20,
-			color = {1,0,1},
-			xVel = -2
+			width = 16,
+			height = 16,
+			image = "Grapple Point.png",
+			xVel = -2,
+			recycle = false
 		}
 	)
 
 	-- Add physics to the player
-	physics.addBody(objPlayer, "dynamic", { friction=1, bounce=0 })
+	physics.addBody(objKnight, "dynamic", { friction=1, bounce=0 })
 
 	-- Add physics to the grass
 	physics.addBody(grass, "static", {bounce = 0, friction = 1})
