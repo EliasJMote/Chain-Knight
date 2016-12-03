@@ -36,7 +36,7 @@ function scene:create( event )
 	-- INSERT code here to initialize the scene
 	-- e.g. add display objects to 'sceneGroup', add touch listeners, etc.
 
-	titleText = display.newText( "Endless Runner", display.actualContentWidth / 2 - 44,
+	titleText = display.newText( "Chain Knight", display.actualContentWidth / 2 - 44,
 	 100, native.systemFont, 16 )
 
 	playBtn = widget.newButton{

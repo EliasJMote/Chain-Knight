@@ -5,7 +5,7 @@
 -----------------------------------------------------------------------------------------
 
 -- load global variables
-local g = gameGlobals
+local g = globalVariables
 
 -- include Corona's "composer" library
 local composer = require( "composer" )
@@ -13,6 +13,9 @@ local scene = composer.newScene()
 
 -- include Corona's "widget" library
 local widget = require "widget"
+
+-- load required Corona modules
+local json = require( "json" )
 
 local function musicVolumeListener(event)
 	g.musicVolume = event.value
@@ -27,6 +30,15 @@ end
 local function onTitleBtnRelease()
 	-- load game screen
 	composer.gotoScene( "title_screen" )
+
+	-- Encode the volume settings into json
+	local settings = {musicVolume = g.musicVolume, sfxVolume = g.sfxVolume}
+	jsonSettings = json.encode( settings )
+	print(jsonSettings)
+	writeDataFile(jsonSettings, "user_preferences.txt")
+
+	-- Save volume settings in user preference file
+
 
 	return true
 end
@@ -51,6 +63,7 @@ function scene:create( event )
 		y = 110,
 		listener = musicVolumeListener,
 	} )
+	musicVolumeSlider:setValue(g.musicVolume)
 
 	sfxVolumeText = display.newText( "SFX Volume " .. g.sfxVolume,
 	 display.actualContentWidth / 2 - 44, 140, native.systemFont, 16 )
@@ -61,6 +74,7 @@ function scene:create( event )
 		y = 170,
 		listener = sfxVolumeListener
 	} )
+	sfxVolumeSlider:setValue(g.sfxVolume)
 
 	titleBtn = widget.newButton{
 		label="Return",

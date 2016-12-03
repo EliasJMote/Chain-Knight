@@ -74,14 +74,54 @@
 -- Show deployment on Android or iOS device
 -- Demo app and show some source code in front of class (during the last week)
 
-gameGlobals = {
+globalVariables = {
 	musicVolume = 50,
 	sfxVolume = 50,
+	topScore = 0
 }
 
 -- include Corona's "composer" library
 local composer = require( "composer" )
 local scene = composer.newScene()
+
+-- load required Corona modules
+local json = require( "json" )
+
+-- Global functions
+
+-- Save the string str to a data file with the given path name. 
+-- Return true if successful, false if failure.
+function writeDataFile(str, pathName, mode)
+	local file = io.open(pathName, mode or "w")
+	if file then
+		file:write(str)
+		io.close(file)
+		print("Saved to: " .. pathName)
+		return true
+	end
+	return false
+end
+
+-- Load the contents of a data file with the given path name.
+-- Return the contents as a string or nil if failure (e.g. file does not exist).
+function readDataFile(pathName)
+	local str = nil
+	local file = io.open(pathName, "r")
+	if file then
+		str = file:read("*a")  -- read entire file as a single string
+		io.close(file)
+		if str then
+			print("Loaded from: " .. pathName)
+		end
+	end
+	return str
+end
+
+local jsonSettings = readDataFile("user_preferences.txt")
+local settings = json.decode(jsonSettings)
+
+globalVariables.musicVolume = settings.musicVolume
+globalVariables.sfxVolume = settings.sfxVolume
 
 -- hide the status bar
 display.setStatusBar( display.HiddenStatusBar )
